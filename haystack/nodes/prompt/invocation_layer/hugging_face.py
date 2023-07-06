@@ -6,7 +6,7 @@ from haystack.nodes.prompt.invocation_layer import PromptModelInvocationLayer, T
 from haystack.nodes.prompt.invocation_layer.handlers import DefaultTokenStreamingHandler
 from haystack.lazy_imports import LazyImport
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, StoppingCriteria, StoppingCriteriaList
 
 
 logger = logging.getLogger(__name__)
@@ -242,8 +242,17 @@ class HFLocalInvocationLayer(PromptModelInvocationLayer):
                 model_input_kwargs["return_full_text"] = False
                 model_input_kwargs["max_new_tokens"] = self.max_length
             if stop_words:
-                sw = StopWordsCriteria(tokenizer=self.pipe.tokenizer, stop_words=stop_words, device=self.pipe.device)
-                model_input_kwargs["stopping_criteria"] = StoppingCriteriaList([sw])
+
+                class StopOnTokens(StoppingCriteria):
+                    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
+                        for stop_id in [0, 50278]:
+                            if input_ids[0][-1] == stop_id:
+                                return True
+                        return False
+
+                model_input_kwargs["stopping_criteria"] = StoppingCriteriaList([StopOnTokens()])
+                # sw = StopWordsCriteria(tokenizer=self.pipe.tokenizer, stop_words=stop_words, device=self.pipe.device)
+                # model_input_kwargs["stopping_criteria"] = StoppingCriteriaList([sw])
             if top_k:
                 model_input_kwargs["num_return_sequences"] = top_k
                 if "num_beams" not in model_input_kwargs or model_input_kwargs["num_beams"] < top_k:
