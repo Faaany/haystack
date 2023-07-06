@@ -272,12 +272,12 @@ class HFLocalInvocationLayer(PromptModelInvocationLayer):
             output = self.pipe(prompt, **model_input_kwargs)
         generated_texts = [o["generated_text"] for o in output if "generated_text" in o]
 
-        if stop_words:
-            # Although HF generates text until stop words are encountered unfortunately it includes the stop word
-            # We want to exclude it to be consistent with other invocation layers
-            for idx, _ in enumerate(generated_texts):
-                for stop_word in stop_words:
-                    generated_texts[idx] = generated_texts[idx].replace(stop_word, "").strip()
+        # if stop_words:
+        #     # Although HF generates text until stop words are encountered unfortunately it includes the stop word
+        #     # We want to exclude it to be consistent with other invocation layers
+        #     for idx, _ in enumerate(generated_texts):
+        #         for stop_word in stop_words:
+        #             generated_texts[idx] = generated_texts[idx].replace(stop_word, "").strip()
         return generated_texts
 
     def _ensure_token_limit(self, prompt: Union[str, List[Dict[str, str]]]) -> Union[str, List[Dict[str, str]]]:
