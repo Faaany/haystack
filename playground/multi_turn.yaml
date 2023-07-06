@@ -1,0 +1,16 @@
+version: 1.19.0rc0
+components:
+- name: Prompter
+  type: PromptNode
+  params:
+    #model_name_or_path: decapoda-research/llama-7b-hf
+    model_name_or_path: mosaicml/mpt-7b-chat
+    model_kwargs:
+      trust_remote_code: True
+      tokenizer: mosaicml/mpt-7b-chat
+
+pipelines:
+- name: my_query_pipeline
+  nodes:
+  - name: Prompter
+    inputs: [Query]
