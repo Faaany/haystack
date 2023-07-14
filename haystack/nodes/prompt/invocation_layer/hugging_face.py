@@ -201,7 +201,6 @@ class HFLocalInvocationLayer(PromptModelInvocationLayer):
         """
         output: List[Dict[str, str]] = []
         stop_words = kwargs.pop("stop_words", None)
-        top_k = kwargs.get("top_k", None)
         # either stream is True (will use default handler) or stream_handler is provided for custom handler
         stream = kwargs.get("stream", self.stream)
         stream_handler = kwargs.get("stream_handler", self.stream_handler)
@@ -251,23 +250,23 @@ class HFLocalInvocationLayer(PromptModelInvocationLayer):
                 model_input_kwargs["return_full_text"] = False
                 model_input_kwargs["max_new_tokens"] = self.max_length
             if stop_words:
+                sw = StopWordsCriteria(tokenizer=self.pipe.tokenizer, stop_words=stop_words, device=self.pipe.device)
+                model_input_kwargs["stopping_criteria"] = StoppingCriteriaList([sw])
 
-                class StopOnTokens(StoppingCriteria):
-                    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-                        for stop_id in [0, 50278]:
-                            if input_ids[0][-1] == stop_id:
-                                return True
-                        return False
+            if "num_beams" in model_input_kwargs:
+                num_beams = model_input_kwargs["num_beams"]
+                if (
+                    "num_return_sequences" in model_input_kwargs
+                    and model_input_kwargs["num_return_sequences"] > num_beams
+                ):
+                    num_return_sequences = model_input_kwargs["num_return_sequences"]
+                    logger.warning(
+                        "num_return_sequences %s should not be larger than num_beams %s, hence setting it equal to num_beams",
+                        num_return_sequences,
+                        num_beams,
+                    )
+                    model_input_kwargs["num_return_sequences"] = num_beams
 
-                model_input_kwargs["stopping_criteria"] = StoppingCriteriaList([StopOnTokens()])
-                # sw = StopWordsCriteria(tokenizer=self.pipe.tokenizer, stop_words=stop_words, device=self.pipe.device)
-                # model_input_kwargs["stopping_criteria"] = StoppingCriteriaList([sw])
-            if top_k:
-                model_input_kwargs["num_return_sequences"] = top_k
-                if "num_beams" not in model_input_kwargs or model_input_kwargs["num_beams"] < top_k:
-                    if "num_beams" in model_input_kwargs:
-                        logger.warning("num_beams should not be less than top_k, hence setting it to %s", top_k)
-                    model_input_kwargs["num_beams"] = top_k
             # max_new_tokens is used for text-generation and max_length for text2text-generation
             if is_text_generation:
                 model_input_kwargs["max_new_tokens"] = model_input_kwargs.pop("max_length", self.max_length)
@@ -281,12 +280,12 @@ class HFLocalInvocationLayer(PromptModelInvocationLayer):
             output = self.pipe(prompt, **model_input_kwargs)
         generated_texts = [o["generated_text"] for o in output if "generated_text" in o]
 
-        # if stop_words:
-        #     # Although HF generates text until stop words are encountered unfortunately it includes the stop word
-        #     # We want to exclude it to be consistent with other invocation layers
-        #     for idx, _ in enumerate(generated_texts):
-        #         for stop_word in stop_words:
-        #             generated_texts[idx] = generated_texts[idx].replace(stop_word, "").strip()
+        if stop_words:
+            # Although HF generates text until stop words are encountered unfortunately it includes the stop word
+            # We want to exclude it to be consistent with other invocation layers
+            for idx, _ in enumerate(generated_texts):
+                for stop_word in stop_words:
+                    generated_texts[idx] = generated_texts[idx].replace(stop_word, "").strip()
         return generated_texts
 
     def _ensure_token_limit(self, prompt: Union[str, List[Dict[str, str]]]) -> Union[str, List[Dict[str, str]]]:
