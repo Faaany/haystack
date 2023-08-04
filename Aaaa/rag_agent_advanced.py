@@ -41,6 +41,7 @@ def resolver_function(query, agent, agent_step):
     if with_memory:
         return {
             "query": query,
+            "tool_names": agent.tm.get_tool_names(),
             "tool_names_with_descriptions": agent.tm.get_tool_names_with_descriptions(),
             "transcript": agent_step.transcript,
             "memory": agent.memory.load(),
@@ -112,9 +113,7 @@ if __name__ == "__main__":
         )
 
         prompt_node_qa = PromptNode(
-            model_name_or_path="text-davinci-003",
-            api_key=openai_api_key,
-            default_prompt_template=rag_qa_prompt_template,
+            model_name_or_path="gpt-3.5-turbo", api_key=openai_api_key, default_prompt_template=rag_qa_prompt_template
         )
 
         # if use_openai_model:
