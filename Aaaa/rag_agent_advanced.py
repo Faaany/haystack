@@ -27,7 +27,7 @@ use_haystack_pipeline = False
 with_memory = False
 use_openai_model = True
 
-openai_api_key = "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"
+openai_api_key = "xxx"
 
 
 def launch_document_store():
