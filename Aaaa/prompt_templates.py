@@ -158,7 +158,7 @@ The AI Agent has access to these tools:
 AI Agent responses must start with one of the following:
 
 Thought: [the AI Agent's reasoning process]
-Tool: [tool names] (on a new line) Tool Input: [input as a question for the selected tool WITHOUT quotation marks and on a new line] (These must always be provided together and on separate lines.)
+Tool: [pick one of {tool_names}] (on a new line) Tool Input: [input as a question for the selected tool WITHOUT quotation marks and on a new line] (These must always be provided together and on separate lines.)
 Observation: [tool's result]
 Final Answer: [final answer to the human user's question]
 When selecting a tool, the AI Agent must provide both the "Tool:" and "Tool Input:" pair in the same response, but on separate lines.

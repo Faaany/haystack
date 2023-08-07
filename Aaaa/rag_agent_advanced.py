@@ -7,6 +7,7 @@ from prompt_templates import (
     rag_qa_prompt_template,
     agent_prompt_no_memory2,
     agent_prompt_no_memory3,
+    agent_prompt_original_no_memory,
 )
 
 from haystack.document_stores import InMemoryDocumentStore
@@ -16,17 +17,17 @@ from haystack.agents import Tool
 from haystack.nodes import PromptNode, PromptTemplate
 from haystack.agents.memory import ConversationSummaryMemory
 from haystack.agents import AgentStep, Agent
-from haystack.agents.base import Agent, ToolsManager
+from haystack.agents.base import Agent, ToolsManager, Tool
 from haystack.utils import print_answers
 import os
 
-os.environ["TRANSFORMERS_CACHE"] = "/localdisk/fanlilin"
+os.environ["TRANSFORMERS_CACHE"] = "/localdisk/fanli/.cache"
 
 use_haystack_pipeline = False
 with_memory = False
 use_openai_model = True
 
-openai_api_key = "xxxx"
+openai_api_key = "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"
 
 
 def launch_document_store():
@@ -104,6 +105,19 @@ if __name__ == "__main__":
     document_store = launch_document_store()
 
     retriever = BM25Retriever(document_store=document_store, top_k=3)
+    retriever_pipeline = Pipeline()
+    retriever_pipeline.add_node(component=retriever, name="retriever", inputs=["Query"])
+
+    class MyRetrieverTool:
+        def __init__(self, pipeline):
+            self.pipeline = pipeline
+
+        def __call__(self, query):
+            documents = self.pipeline.run(query=query)["documents"]
+            joined = "\n".join([doc.content for doc in documents])
+            return joined
+
+    callable_retriever_tool = MyRetrieverTool(pipeline=retriever_pipeline)
 
     if not use_haystack_pipeline:
         prompt_node_summarizer = PromptNode(
@@ -125,8 +139,8 @@ if __name__ == "__main__":
         #         model_name_or_path="lmsys/vicuna-13b-v1.3", default_prompt_template=qa_prompt_template
         #     )
         retriever_tool = Tool(
-            name="retriever",
-            pipeline_or_node=retriever,
+            name="paragraph_retriever",
+            pipeline_or_node=callable_retriever_tool,
             description="useful when you need to find relevant paragraphs that might contain answers to a question",
             output_variable="documents",
         )
