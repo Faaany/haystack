@@ -1,14 +1,7 @@
-from datasets import load_dataset
+import os
+import argparse
 
-from prompt_templates import (
-    agent_prompt_no_memory,
-    agent_prompt_with_memory,
-    summarizer_prompt_template,
-    rag_qa_prompt_template,
-    agent_prompt_no_memory2,
-    agent_prompt_no_memory3,
-    agent_prompt_original_no_memory,
-)
+from datasets import load_dataset
 
 from haystack.document_stores import InMemoryDocumentStore
 from haystack.nodes import PromptNode, PromptTemplate, AnswerParser, BM25Retriever
@@ -19,22 +12,49 @@ from haystack.agents.memory import ConversationSummaryMemory
 from haystack.agents import AgentStep, Agent
 from haystack.agents.base import Agent, ToolsManager, Tool
 from haystack.utils import print_answers
-import os
 
-os.environ["TRANSFORMERS_CACHE"] = "/localdisk/fanli/.cache"
+from prompt_templates import (
+    agent_prompt_no_memory,
+    agent_prompt_with_memory,
+    summarizer_prompt_template,
+    rag_qa_prompt_template,
+    agent_prompt_no_memory2,
+    agent_prompt_no_memory3,
+    agent_prompt_original_no_memory,
+    agent_prompt_original,
+)
 
-use_haystack_pipeline = False
-with_memory = False
-use_openai_model = True
+OPENAI_API_KEY=os.getenv("OPENAI_KEY")
 
-openai_api_key = "xxx"
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--with-memory",
+        default=False,
+        action="store_true",
+        help="whether the agent should has a memory or not",
+    )
+    parser.add_argument(
+        "--use-openai-model",
+        default=False,
+        action="store_true",
+        help="whether or not to use the OpenAI model for agent",
+    )
+    parser.add_argument(
+        "--ipex",
+        default=False,
+        action="store_true",
+        help="whether to use ipex for inference acceleration",
+    )
+
+    args = parser.parse_args()
+    return args
 
 
 def launch_document_store():
     dataset = load_dataset("bilgeyucel/seven-wonders", split="train")
     document_store = InMemoryDocumentStore(use_bm25=True)
     document_store.write_documents(dataset)
-
     return document_store
 
 
@@ -58,19 +78,23 @@ def resolver_function(query, agent, agent_step):
 
 def create_memory():
     memory_prompt_node = PromptNode(
-        "philschmid/bart-large-cnn-samsum", max_length=256, model_kwargs={"task_name": "text2text-generation"}
+        "philschmid/bart-large-cnn-samsum",
+        max_length=256,
+        model_kwargs={"task_name": "text2text-generation"},
     )
-    memory = ConversationSummaryMemory(memory_prompt_node, prompt_template="{chat_transcript}")
+    memory = ConversationSummaryMemory(
+        memory_prompt_node, prompt_template="{chat_transcript}"
+    )
 
     return memory
 
 
-def create_agent(tools_manager, with_memory, use_openai_model):
+def create_agent(tools_manager, with_memory, use_openai_model, ipex):
     if use_openai_model:
         model_name = "gpt-3.5-turbo"
         agent_prompt_node = PromptNode(
             model_name,
-            api_key=openai_api_key,
+            api_key=OPENAI_API_KEY,
             max_length=500,
             stop_words=["Observation:"],
             model_kwargs={"temperature": 0.5},
@@ -78,14 +102,21 @@ def create_agent(tools_manager, with_memory, use_openai_model):
     else:
         model_name = "lmsys/vicuna-13b-v1.3"
         agent_prompt_node = PromptNode(
-            model_name, max_length=256, stop_words=["Observation:"], model_kwargs={"temperature": 0.5}
+            model_name,
+            max_length=256,
+            stop_words=["Observation:"],
+            model_kwargs={
+                "temperature": 0.5,
+                "use_ipex": ipex,
+                "torch_dtype": "torch.bfloat16",
+            },
         )
 
     if with_memory:
         memory = create_memory()
         conversational_agent = Agent(
             agent_prompt_node,
-            prompt_template=agent_prompt_with_memory,
+            prompt_template=agent_prompt_original,
             prompt_parameters_resolver=resolver_function,
             memory=memory,
             tools_manager=tools_manager,
@@ -93,7 +124,7 @@ def create_agent(tools_manager, with_memory, use_openai_model):
     else:
         conversational_agent = Agent(
             agent_prompt_node,
-            prompt_template=agent_prompt_no_memory3,
+            prompt_template=agent_prompt_original_no_memory,
             prompt_parameters_resolver=resolver_function,
             tools_manager=tools_manager,
         )
@@ -101,9 +132,7 @@ def create_agent(tools_manager, with_memory, use_openai_model):
     return conversational_agent
 
 
-if __name__ == "__main__":
-    document_store = launch_document_store()
-
+def create_retriever_tool(document_store):
     retriever = BM25Retriever(document_store=document_store, top_k=3)
     retriever_pipeline = Pipeline()
     retriever_pipeline.add_node(component=retriever, name="retriever", inputs=["Query"])
@@ -114,72 +143,80 @@ if __name__ == "__main__":
 
         def __call__(self, query):
             documents = self.pipeline.run(query=query)["documents"]
-            joined = "\n".join([doc.content for doc in documents])
+            joined = documents[0].content
+            # joined = "\n".join([doc.content for doc in documents])
             return joined
 
-    callable_retriever_tool = MyRetrieverTool(pipeline=retriever_pipeline)
+    callable_retriever = MyRetrieverTool(pipeline=retriever_pipeline)
 
-    if not use_haystack_pipeline:
-        prompt_node_summarizer = PromptNode(
-            model_name_or_path="text-davinci-003",
-            api_key=openai_api_key,
-            default_prompt_template=summarizer_prompt_template,
-        )
+    retriever_tool = Tool(
+        name="retriever",
+        pipeline_or_node=callable_retriever,
+        description="useful when you need to find relevant paragraphs that might contain answers to a question",
+        output_variable="documents",
+    )
 
-        prompt_node_qa = PromptNode(
-            model_name_or_path="gpt-3.5-turbo", api_key=openai_api_key, default_prompt_template=rag_qa_prompt_template
-        )
+    return retriever_tool
 
-        # if use_openai_model:
-        #     prompt_node = PromptNode(
-        #         model_name_or_path="text-davinci-003", api_key=openai_api_key, default_prompt_template=summarizer_prompt_template
-        #     )
-        # else:
-        #     prompt_node = PromptNode(
-        #         model_name_or_path="lmsys/vicuna-13b-v1.3", default_prompt_template=qa_prompt_template
-        #     )
-        retriever_tool = Tool(
-            name="paragraph_retriever",
-            pipeline_or_node=callable_retriever_tool,
-            description="useful when you need to find relevant paragraphs that might contain answers to a question",
-            output_variable="documents",
-        )
 
-        rag_qa_tool = Tool(
-            name="question_answering",
-            pipeline_or_node=prompt_node_qa,
-            description="useful when you need to find an answer from some retrieved paragraphs",
-            output_variable="answers",
-        )
-
-        summarizer_tool = Tool(
-            name="summarizer",
-            pipeline_or_node=prompt_node_summarizer,
-            description="useful when you need to summarize a given paragraph",
-            output_variable="answers",
-        )
-
-        tools_manager = ToolsManager([retriever_tool, rag_qa_tool, summarizer_tool])
-
-    else:
+def create_qa_tool(use_openai_model):
+    if use_openai_model:
         prompt_node = PromptNode(
             model_name_or_path="text-davinci-003",
-            api_key=openai_api_key,
+            api_key=OPENAI_API_KEY,
+            default_prompt_template=rag_qa_prompt_template,
+        )
+    else:
+        prompt_node = PromptNode(
+            model_name_or_path="lmsys/vicuna-13b-v1.3",
+            default_prompt_template=rag_qa_prompt_template,
+        )
+
+    rag_qa_tool = Tool(
+        name="answer",
+        pipeline_or_node=prompt_node,
+        description="useful when you need to find an answer from some retrieved paragraphs",
+        output_variable="answers",
+    )
+
+    return rag_qa_tool
+
+
+def create_summarizer_tool(use_openai_model):
+    if use_openai_model:
+        prompt_node = PromptNode(
+            model_name_or_path="text-davinci-003",
+            api_key=OPENAI_API_KEY,
             default_prompt_template=summarizer_prompt_template,
-            model_kwargs={"temperature": 0},
         )
-        generative_pipeline = Pipeline()
-        generative_pipeline.add_node(component=retriever, name="retriever", inputs=["Query"])
-        generative_pipeline.add_node(component=prompt_node, name="prompt_node", inputs=["retriever"])
-
-        search_tool = Tool(
-            name="seven_wonders_search",
-            pipeline_or_node=generative_pipeline,
-            description="useful for when you need to answer questions about the seven wonders of the world",
-            output_variable="answers",
+    else:
+        prompt_node = PromptNode(
+            model_name_or_path="lmsys/vicuna-13b-v1.3",
+            default_prompt_template=rag_qa_prompt_template,
         )
-        tools_manager = ToolsManager([search_tool])
 
-    conversational_agent = create_agent(tools_manager, with_memory, use_openai_model)
+    summarizer_tool = Tool(
+        name="summarizer",
+        pipeline_or_node=prompt_node,
+        description="useful when you need to summarize a given paragraph",
+        output_variable="answers",
+    )
 
-    conversational_agent.run("What did the Rhodes Statue look like?")
+    return rag_qa_tool
+
+
+if __name__ == "__main__":
+    args = get_args()
+    use_openai_model = args.use_openai_model
+    with_memory = args.with_memory
+    ipex = args.ipex 
+
+    document_store = launch_document_store()
+    retriever_tool = create_retriever_tool(document_store)
+    rag_qa_tool = create_qa_tool(use_openai_model)
+    summarizer_tool = create_summarizer_tool(use_openai_model)
+    tools_manager = ToolsManager([retriever_tool, rag_qa_tool, summarizer_tool])
+
+    agent = create_agent(tools_manager, with_memory, use_openai_model, ipex)
+
+    agent.run("What did the Rhodes Statue look like?")
