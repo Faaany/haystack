@@ -143,8 +143,8 @@ def create_retriever_tool(document_store):
 
         def __call__(self, query):
             documents = self.pipeline.run(query=query)["documents"]
-            joined = documents[0].content
-            # joined = "\n".join([doc.content for doc in documents])
+            #joined = documents[0].content
+            joined = "\n".join([doc.content for doc in documents])
             return joined
 
     callable_retriever = MyRetrieverTool(pipeline=retriever_pipeline)
